@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, MapPin, Phone, ExternalLink, Radio, Wifi, Settings, Eye, EyeOff } from "lucide-react";
+import { Loader2, MapPin, Phone, ExternalLink, Radio, Wifi, Settings, Eye, EyeOff, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { FirecrawlService } from "@/lib/FirecrawlService";
 
@@ -27,7 +27,8 @@ interface BusinessResult {
     office?: string;
     landuse?: string;
   };
-  fiberCoverage?: 'FTTH' | 'FWA' | 'Non coperto' | 'Verifica in corso...';
+  fiberCoverage?: 'FTTH' | 'FWA' | 'Non coperto' | 'Verifica in corso...' | 'Errore verifica';
+  coverageError?: string;
 }
 
 interface CategoryFilter {
@@ -56,6 +57,7 @@ export default function CoverageAreaFinder() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [isApiKeyValid, setIsApiKeyValid] = useState(false);
   const [showApiKeyConfig, setShowApiKeyConfig] = useState(false);
+  const [coverageCheckInProgress, setCoverageCheckInProgress] = useState(false);
   
   const { toast } = useToast();
 
@@ -70,12 +72,11 @@ export default function CoverageAreaFinder() {
     }
   }, []);
 
-  // Calculate radio coverage radius based on antenna height
   const calculateRadioCoverage = (h: string) => {
     const height = parseFloat(h);
     if (isNaN(height) || height <= 0) return 0;
-    const distanceKm = 3.57 * Math.sqrt(height); // Approximate formula
-    return distanceKm * 1000; // Convert to meters
+    const distanceKm = 3.57 * Math.sqrt(height);
+    return distanceKm * 1000;
   };
 
   useEffect(() => {
@@ -149,8 +150,7 @@ out body qt;`;
         description: `Trovate ${businesses.length} attività`,
       });
 
-      // Avvia la verifica della copertura fibra in background
-      if (businesses.length > 0) {
+      if (businesses.length > 0 && isApiKeyValid) {
         checkFiberCoverageForResults(businesses);
       }
     } catch (error) {
@@ -190,7 +190,6 @@ out body qt;`;
     return { type: "unknown", category: "Altro" };
   };
 
-  // API key management functions
   const handleApiKeyTest = async () => {
     if (!firecrawlApiKey.trim()) {
       toast({
@@ -219,8 +218,7 @@ out body qt;`;
     }
   };
 
-  // Check Open Fiber coverage for a specific address using web scraping
-  const checkOpenFiberCoverage = async (address: string, city: string): Promise<'FTTH' | 'FWA' | 'Non coperto' | null> => {
+  const checkOpenFiberCoverage = async (address: string, city: string): Promise<'FTTH' | 'FWA' | 'Non coperto' | 'Errore verifica' | null> => {
     try {
       if (!isApiKeyValid) {
         console.log('API key not valid, skipping coverage check');
@@ -235,40 +233,75 @@ out body qt;`;
         return result.coverage;
       } else {
         console.error('Errore nel web scraping:', result.error);
-        return null;
+        
+        // Show user-friendly error message for rate limiting
+        if (result.error?.includes('Rate limit') || result.error?.includes('429')) {
+          toast({
+            title: "Troppi tentativi",
+            description: "Attendi qualche secondo prima di verificare nuovamente la copertura",
+            variant: "destructive",
+          });
+        }
+        
+        return 'Errore verifica';
       }
     } catch (error) {
       console.error('Errore nella verifica copertura fibra:', error);
-      return null;
+      return 'Errore verifica';
     }
   };
 
-  // Check fiber coverage for all results
   const checkFiberCoverageForResults = async (businesses: BusinessResult[]) => {
+    setCoverageCheckInProgress(true);
     const updatedResults = [...businesses];
+    
+    // Show info toast about the process
+    toast({
+      title: "Verifica copertura fibra",
+      description: `Verifica della copertura Open Fiber in corso per ${businesses.length} attività. Questo potrebbe richiedere alcuni minuti.`,
+    });
     
     for (let i = 0; i < updatedResults.length; i++) {
       const business = updatedResults[i];
+      
+      // Skip if no valid address
+      const address = formatAddress(business.tags);
+      const city = business.tags?.["addr:city"] || "";
+      
+      if (!address || address.trim().length < 3 || !city) {
+        console.log('Skipping business with invalid address:', business.tags?.name);
+        continue;
+      }
+      
       business.fiberCoverage = 'Verifica in corso...';
       setResults([...updatedResults]);
       
-      const address = formatAddress(business.tags);
-      const city = business.tags?.["addr:city"] || "";
-      if (address && address.trim() !== '') {
-        const coverage = await checkOpenFiberCoverage(address, city);
-        if (coverage) {
-          business.fiberCoverage = coverage;
-        } else {
-          // Rimuovi il campo se il web scraping fallisce
-          delete business.fiberCoverage;
-        }
+      const coverage = await checkOpenFiberCoverage(address, city);
+      if (coverage) {
+        business.fiberCoverage = coverage;
       } else {
-        // Rimuovi il campo se non c'è indirizzo
+        // Remove coverage field if scraping fails
         delete business.fiberCoverage;
       }
       
       setResults([...updatedResults]);
+      
+      // Add a small delay to be respectful to the API
+      if (i < updatedResults.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     }
+    
+    setCoverageCheckInProgress(false);
+    
+    const successfulChecks = updatedResults.filter(b => 
+      b.fiberCoverage && b.fiberCoverage !== 'Verifica in corso...' && b.fiberCoverage !== 'Errore verifica'
+    ).length;
+    
+    toast({
+      title: "Verifica completata",
+      description: `Copertura verificata per ${successfulChecks} attività`,
+    });
   };
 
   const getFiberBadgeVariant = (coverage?: string) => {
@@ -276,6 +309,7 @@ out body qt;`;
       case 'FTTH': return 'default';
       case 'FWA': return 'secondary';
       case 'Non coperto': return 'destructive';
+      case 'Errore verifica': return 'outline';
       default: return 'outline';
     }
   };
@@ -285,6 +319,7 @@ out body qt;`;
       case 'FTTH': return 'text-green-700 bg-green-100';
       case 'FWA': return 'text-yellow-700 bg-yellow-100';
       case 'Non coperto': return 'text-red-700 bg-red-100';
+      case 'Errore verifica': return 'text-gray-700 bg-gray-100';
       default: return 'text-gray-700 bg-gray-100';
     }
   };
@@ -328,7 +363,7 @@ out body qt;`;
                   <p className="text-xs text-yellow-700 dark:text-yellow-300">
                     Per verificare la copertura Open Fiber tramite web scraping, è necessaria una chiave API Firecrawl.
                     <br />
-                    <span className="font-medium">Raccomandazione:</span> Connetti il progetto a Supabase per una gestione sicura delle chiavi API.
+                    <span className="font-medium">Importante:</span> Il sistema rispetta i limiti di rate per evitare errori.
                   </p>
                   <div className="space-y-2">
                     <Label htmlFor="api-key" className="text-sm">Chiave API Firecrawl</Label>
@@ -380,7 +415,9 @@ out body qt;`;
               <div className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-md border border-green-200 dark:border-green-800">
                 <div className="flex items-center gap-2">
                   <Wifi className="h-4 w-4 text-green-600" />
-                  <span className="text-sm text-green-700 dark:text-green-300">Web scraping attivo</span>
+                  <span className="text-sm text-green-700 dark:text-green-300">
+                    Web scraping attivo {coverageCheckInProgress && "(in corso...)"}
+                  </span>
                 </div>
                 <Button
                   type="button"
@@ -392,6 +429,17 @@ out body qt;`;
                 </Button>
               </div>
             )}
+
+            {/* Warning about rate limiting */}
+            {isApiKeyValid && (
+              <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800">
+                <AlertTriangle className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                <div className="text-xs text-blue-700 dark:text-blue-300">
+                  <strong>Info:</strong> La verifica della copertura avviene con un ritardo di 2 secondi tra le richieste per rispettare i limiti dell'API.
+                </div>
+              </div>
+            )}
+
             {/* Coordinates */}
             <div>
               <Label htmlFor="coordinates" className="text-sm font-medium">Coordinate (Latitudine, Longitudine)</Label>
@@ -551,10 +599,19 @@ out body qt;`;
                                   className={`${getFiberBadgeColor(item.fiberCoverage)} border-0`}
                                 >
                                   <Wifi className="h-3 w-3 mr-1" />
-                                  {item.fiberCoverage === 'Verifica in corso...' ? 
-                                    <><Loader2 className="h-3 w-3 animate-spin mr-1" />Verifica...</> : 
+                                  {item.fiberCoverage === 'Verifica in corso...' ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                      Verifica...
+                                    </>
+                                  ) : item.fiberCoverage === 'Errore verifica' ? (
+                                    <>
+                                      <AlertTriangle className="h-3 w-3 mr-1" />
+                                      Errore
+                                    </>
+                                  ) : (
                                     item.fiberCoverage
-                                  }
+                                  )}
                                 </Badge>
                               )}
                             </div>
