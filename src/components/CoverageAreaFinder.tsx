@@ -173,12 +173,29 @@ out body qt;`;
   };
 
   const formatAddress = (tags: BusinessResult["tags"]) => {
-    const street = tags?.["addr:street"] || "";
-    const number = tags?.["addr:housenumber"] || "";
-    const postcode = tags?.["addr:postcode"] || "";
-    const city = tags?.["addr:city"] || "";
+    const street = tags?.["addr:street"]?.trim() || "";
+    const number = tags?.["addr:housenumber"]?.trim() || "";
+    const postcode = tags?.["addr:postcode"]?.trim() || "";
+    const city = tags?.["addr:city"]?.trim() || "";
     
-    return `${street} ${number}, ${postcode} ${city}`.replace(/\s+/g, " ").trim();
+    // Costruisci l'indirizzo solo con parti valide
+    const addressParts = [];
+    
+    if (street && number) {
+      addressParts.push(`${street} ${number}`);
+    } else if (street) {
+      addressParts.push(street);
+    }
+    
+    if (postcode) {
+      addressParts.push(postcode);
+    }
+    
+    if (city) {
+      addressParts.push(city);
+    }
+    
+    return addressParts.join(", ");
   };
 
   const getBusinessType = (tags: BusinessResult["tags"]) => {
@@ -266,10 +283,21 @@ out body qt;`;
       
       // Skip if no valid address
       const address = formatAddress(business.tags);
-      const city = business.tags?.["addr:city"] || "";
+      const city = business.tags?.["addr:city"]?.trim() || "";
       
-      if (!address || address.trim().length < 3 || !city) {
-        console.log('Skipping business with invalid address:', business.tags?.name);
+      // Valida che l'indirizzo sia significativo
+      if (!address || address.length < 5 || !city || city.length < 2) {
+        console.log('Skipping business with invalid address:', {
+          name: business.tags?.name,
+          address: address,
+          city: city
+        });
+        continue;
+      }
+      
+      // Skip se l'indirizzo contiene solo segni di punteggiatura
+      if (!/[a-zA-Z0-9]/.test(address)) {
+        console.log('Skipping business with non-alphanumeric address:', address);
         continue;
       }
       
