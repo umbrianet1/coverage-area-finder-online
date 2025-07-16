@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, MapPin, Phone, ExternalLink, Radio, Wifi } from "lucide-react";
+import { Loader2, MapPin, Phone, ExternalLink, Radio, Wifi, Settings, Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { FirecrawlService } from "@/lib/FirecrawlService";
 
 interface BusinessResult {
   id: number;
@@ -50,7 +51,24 @@ export default function CoverageAreaFinder() {
     industriali: false,
   });
   
+  // Firecrawl API key management
+  const [firecrawlApiKey, setFirecrawlApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [isApiKeyValid, setIsApiKeyValid] = useState(false);
+  const [showApiKeyConfig, setShowApiKeyConfig] = useState(false);
+  
   const { toast } = useToast();
+
+  // Check if API key is saved on component mount
+  useEffect(() => {
+    const savedApiKey = FirecrawlService.getApiKey();
+    if (savedApiKey) {
+      setFirecrawlApiKey(savedApiKey);
+      setIsApiKeyValid(true);
+    } else {
+      setShowApiKeyConfig(true);
+    }
+  }, []);
 
   // Calculate radio coverage radius based on antenna height
   const calculateRadioCoverage = (h: string) => {
@@ -172,20 +190,51 @@ out body qt;`;
     return { type: "unknown", category: "Altro" };
   };
 
-  // Check Open Fiber coverage for a specific address
-  const checkOpenFiberCoverage = async (address: string): Promise<'FTTH' | 'FWA' | 'Non coperto'> => {
+  // API key management functions
+  const handleApiKeyTest = async () => {
+    if (!firecrawlApiKey.trim()) {
+      toast({
+        title: "Errore",
+        description: "Inserisci una chiave API valida",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const isValid = await FirecrawlService.testApiKey(firecrawlApiKey);
+    if (isValid) {
+      FirecrawlService.saveApiKey(firecrawlApiKey);
+      setIsApiKeyValid(true);
+      setShowApiKeyConfig(false);
+      toast({
+        title: "Successo",
+        description: "Chiave API validata e salvata",
+      });
+    } else {
+      toast({
+        title: "Errore",
+        description: "Chiave API non valida",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Check Open Fiber coverage for a specific address using web scraping
+  const checkOpenFiberCoverage = async (address: string, city: string): Promise<'FTTH' | 'FWA' | 'Non coperto'> => {
     try {
-      // Simula una chiamata all'API di Open Fiber
-      // In una implementazione reale, qui faresti una chiamata al sito di Open Fiber
-      // usando web scraping o API non ufficiali
+      if (!isApiKeyValid) {
+        console.log('API key not valid, returning default coverage');
+        return 'Non coperto';
+      }
+
+      const result = await FirecrawlService.scrapeOpenFiberCoverage(city, address);
       
-      // Per ora ritorniamo un valore casuale per dimostrare la funzionalità
-      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
-      
-      const random = Math.random();
-      if (random < 0.6) return 'FTTH';
-      if (random < 0.8) return 'FWA';
-      return 'Non coperto';
+      if (result.success && result.coverage) {
+        return result.coverage;
+      } else {
+        console.error('Errore nel web scraping:', result.error);
+        return 'Non coperto';
+      }
     } catch (error) {
       console.error('Errore nella verifica copertura fibra:', error);
       return 'Non coperto';
@@ -202,8 +251,9 @@ out body qt;`;
       setResults([...updatedResults]);
       
       const address = formatAddress(business.tags);
+      const city = business.tags?.["addr:city"] || "";
       if (address && address.trim() !== '') {
-        const coverage = await checkOpenFiberCoverage(address);
+        const coverage = await checkOpenFiberCoverage(address, city);
         business.fiberCoverage = coverage;
       } else {
         business.fiberCoverage = 'Non coperto';
@@ -257,6 +307,83 @@ out body qt;`;
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Firecrawl API Configuration */}
+            {(showApiKeyConfig || !isApiKeyValid) && (
+              <Card className="border border-yellow-300 bg-yellow-50 dark:bg-yellow-900/20">
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Settings className="h-4 w-4 text-yellow-600" />
+                    <Label className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                      Configurazione Web Scraping
+                    </Label>
+                  </div>
+                  <p className="text-xs text-yellow-700 dark:text-yellow-300">
+                    Per verificare la copertura Open Fiber tramite web scraping, è necessaria una chiave API Firecrawl.
+                    <br />
+                    <span className="font-medium">Raccomandazione:</span> Connetti il progetto a Supabase per una gestione sicura delle chiavi API.
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="api-key" className="text-sm">Chiave API Firecrawl</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="api-key"
+                        type={showApiKey ? "text" : "password"}
+                        value={firecrawlApiKey}
+                        onChange={(e) => setFirecrawlApiKey(e.target.value)}
+                        placeholder="fc-xxxxxxxxxxxxx"
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      onClick={handleApiKeyTest}
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                    >
+                      Testa & Salva
+                    </Button>
+                    {isApiKeyValid && (
+                      <Button
+                        type="button"
+                        onClick={() => setShowApiKeyConfig(false)}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Nascondi
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {isApiKeyValid && !showApiKeyConfig && (
+              <div className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-md border border-green-200 dark:border-green-800">
+                <div className="flex items-center gap-2">
+                  <Wifi className="h-4 w-4 text-green-600" />
+                  <span className="text-sm text-green-700 dark:text-green-300">Web scraping attivo</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowApiKeyConfig(true)}
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
             {/* Coordinates */}
             <div>
               <Label htmlFor="coordinates" className="text-sm font-medium">Coordinate (Latitudine, Longitudine)</Label>
