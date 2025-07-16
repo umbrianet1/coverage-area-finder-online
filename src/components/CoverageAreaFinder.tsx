@@ -37,6 +37,7 @@ interface CategoryFilter {
 export default function CoverageAreaFinder() {
   const [lat, setLat] = useState("41.9028");
   const [lon, setLon] = useState("12.4964");
+  const [coordinates, setCoordinates] = useState("41.9028, 12.4964");
   const [radiusManual, setRadiusManual] = useState("");
   const [height, setHeight] = useState("30");
   const [results, setResults] = useState<BusinessResult[]>([]);
@@ -191,25 +192,22 @@ out body qt;`;
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Coordinates */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="lat" className="text-sm font-medium">Latitudine</Label>
-                <Input
-                  id="lat"
-                  value={lat}
-                  onChange={(e) => setLat(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="lon" className="text-sm font-medium">Longitudine</Label>
-                <Input
-                  id="lon"
-                  value={lon}
-                  onChange={(e) => setLon(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
+            <div>
+              <Label htmlFor="coordinates" className="text-sm font-medium">Coordinate (Latitudine, Longitudine)</Label>
+              <Input
+                id="coordinates"
+                value={coordinates}
+                onChange={(e) => {
+                  setCoordinates(e.target.value);
+                  const coords = e.target.value.split(',').map(coord => coord.trim());
+                  if (coords.length === 2 && !isNaN(Number(coords[0])) && !isNaN(Number(coords[1]))) {
+                    setLat(coords[0]);
+                    setLon(coords[1]);
+                  }
+                }}
+                placeholder="es. 41.9028, 12.4964"
+                className="mt-1"
+              />
             </div>
 
             {/* Antenna Height */}
