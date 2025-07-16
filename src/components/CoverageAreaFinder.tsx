@@ -178,7 +178,23 @@ out body qt;`;
     const postcode = tags?.["addr:postcode"] || "";
     const city = tags?.["addr:city"] || "";
     
-    return `${street} ${number}, ${postcode} ${city}`.replace(/\s+/g, " ").trim();
+    // Costruisce l'indirizzo solo con le parti disponibili
+    const parts = [];
+    if (street) {
+      if (number) {
+        parts.push(`${street} ${number}`);
+      } else {
+        parts.push(street);
+      }
+    }
+    if (postcode && city) {
+      parts.push(`${postcode} ${city}`);
+    } else if (city) {
+      parts.push(city);
+    }
+    
+    const address = parts.join(", ").replace(/\s+/g, " ").trim();
+    return address === "," ? "" : address;
   };
 
   const getBusinessType = (tags: BusinessResult["tags"]) => {
@@ -252,9 +268,35 @@ out body qt;`;
       business.fiberCoverage = 'Verifica in corso...';
       setResults([...updatedResults]);
       
-      const address = formatAddress(business.tags);
-      const city = business.tags?.["addr:city"] || "";
-      if (address && address.trim() !== '') {
+      let address = formatAddress(business.tags);
+      let city = business.tags?.["addr:city"] || "";
+      
+      // Se l'indirizzo OSM è insufficiente, prova a recuperarlo da Google
+      if (!address || address.length < 10) {
+        console.log('OSM address insufficient, trying Google for:', business.tags?.name);
+        try {
+          const googleResult = await FirecrawlService.getAddressFromGoogle(
+            business.tags?.name || '', 
+            business.lat, 
+            business.lon
+          );
+          if (googleResult.success && googleResult.address) {
+            address = googleResult.address;
+            // Estrai la città dall'indirizzo Google se non disponibile
+            if (!city) {
+              const cityMatch = address.match(/\d{5}\s+([A-Z][a-zA-ZÀ-ÿ\s]+)/);
+              if (cityMatch) {
+                city = cityMatch[1].trim();
+              }
+            }
+            console.log('Google address found:', address);
+          }
+        } catch (error) {
+          console.error('Error getting Google address:', error);
+        }
+      }
+      
+      if (address && address.trim() !== '' && city) {
         const coverage = await checkOpenFiberCoverage(address, city);
         if (coverage) {
           business.fiberCoverage = coverage;
@@ -268,6 +310,9 @@ out body qt;`;
       }
       
       setResults([...updatedResults]);
+      
+      // Aggiungi un delay per evitare rate limiting
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   };
 
