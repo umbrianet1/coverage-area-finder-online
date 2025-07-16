@@ -60,41 +60,76 @@ export class FirecrawlService {
         this.firecrawlApp = new FirecrawlApp({ apiKey });
       }
 
-      // Costruisci l'URL di Open Fiber per la verifica copertura
-      const openFiberUrl = `https://openfiber.it/verifica-copertura/`;
+      // Costruisci l'URL di Open Fiber per la verifica copertura con parametri specifici
+      const encodedAddress = encodeURIComponent(`${address}, ${city}`);
+      const openFiberUrl = `https://openfiber.it/verifica-copertura/?address=${encodedAddress}`;
       
-      console.log('Scraping Open Fiber coverage for:', { city, address });
+      console.log('Scraping Open Fiber coverage for:', { city, address, url: openFiberUrl });
       
       const scrapeResponse = await this.firecrawlApp.scrapeUrl(openFiberUrl, {
         formats: ['markdown', 'html'],
-        waitFor: 2000
+        waitFor: 3000,
+        onlyMainContent: true
       }) as FirecrawlResponse;
+
+      console.log('Scrape response:', scrapeResponse);
 
       if (!scrapeResponse.success) {
         console.error('Scrape failed:', (scrapeResponse as ErrorResponse).error);
-        // Fallback to simulated coverage for demonstration
-        return this.getSimulatedCoverage(address);
+        return { 
+          success: false, 
+          error: (scrapeResponse as ErrorResponse).error || 'Failed to scrape Open Fiber' 
+        };
       }
 
       const successResponse = scrapeResponse as ScrapeResponse;
       
       // Verifica che la risposta abbia i dati necessari
       if (!successResponse.data || !successResponse.data.content) {
-        console.warn('Scrape response missing data, using fallback');
-        return this.getSimulatedCoverage(address);
+        console.error('Scrape response missing data:', successResponse);
+        return { 
+          success: false, 
+          error: 'No content received from scraping' 
+        };
       }
 
       // Analizza il contenuto per determinare la copertura
       const content = successResponse.data.content.toLowerCase();
       const markdown = successResponse.data.markdown?.toLowerCase() || '';
+      const html = successResponse.data.html?.toLowerCase() || '';
       
-      // Logica di parsing basata sul contenuto della pagina
+      console.log('Content to analyze:', { 
+        contentLength: content.length, 
+        markdownLength: markdown.length,
+        htmlLength: html.length
+      });
+      
+      // Logica di parsing più robusta basata sul contenuto della pagina Open Fiber
       let coverage: 'FTTH' | 'FWA' | 'Non coperto' = 'Non coperto';
       
-      if (content.includes('ftth') || content.includes('fiber to the home') || markdown.includes('ftth')) {
+      // Cerca indicatori di FTTH
+      if (content.includes('ftth') || 
+          content.includes('fiber to the home') || 
+          content.includes('fibra ottica') ||
+          markdown.includes('ftth') ||
+          html.includes('ftth')) {
         coverage = 'FTTH';
-      } else if (content.includes('fwa') || content.includes('fixed wireless access') || markdown.includes('fwa')) {
+      } 
+      // Cerca indicatori di FWA
+      else if (content.includes('fwa') || 
+               content.includes('fixed wireless access') ||
+               content.includes('wireless fisso') ||
+               markdown.includes('fwa') ||
+               html.includes('fwa')) {
         coverage = 'FWA';
+      }
+      // Cerca indicatori di "non coperto" o "non disponibile"
+      else if (content.includes('non coperto') || 
+               content.includes('non disponibile') ||
+               content.includes('not covered') ||
+               markdown.includes('non coperto') ||
+               html.includes('non coperto')) {
+        coverage = 'Non coperto';
       }
 
       console.log('Coverage detection result:', coverage);
@@ -104,30 +139,11 @@ export class FirecrawlService {
       };
     } catch (error) {
       console.error('Error during Open Fiber scrape:', error);
-      // Fallback to simulated coverage when scraping fails
-      return this.getSimulatedCoverage(address);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to connect to Firecrawl API' 
+      };
     }
-  }
-
-  // Fallback function for simulated coverage when scraping is not available
-  private static getSimulatedCoverage(address: string): { success: boolean; coverage: 'FTTH' | 'FWA' | 'Non coperto' } {
-    // Simulate coverage based on address characteristics for demonstration
-    const addressLower = address.toLowerCase();
-    
-    // Simulate better coverage in major cities
-    if (addressLower.includes('roma') || addressLower.includes('milano') || addressLower.includes('napoli')) {
-      return { success: true, coverage: Math.random() > 0.3 ? 'FTTH' : 'FWA' };
-    }
-    
-    // Random coverage for other areas
-    const random = Math.random();
-    let coverage: 'FTTH' | 'FWA' | 'Non coperto';
-    
-    if (random < 0.4) coverage = 'FTTH';
-    else if (random < 0.7) coverage = 'FWA';
-    else coverage = 'Non coperto';
-    
-    return { success: true, coverage };
   }
 
   static async scrapeWebsite(url: string): Promise<{ success: boolean; error?: string; data?: any }> {

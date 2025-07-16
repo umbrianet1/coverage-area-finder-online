@@ -220,24 +220,26 @@ out body qt;`;
   };
 
   // Check Open Fiber coverage for a specific address using web scraping
-  const checkOpenFiberCoverage = async (address: string, city: string): Promise<'FTTH' | 'FWA' | 'Non coperto'> => {
+  const checkOpenFiberCoverage = async (address: string, city: string): Promise<'FTTH' | 'FWA' | 'Non coperto' | null> => {
     try {
       if (!isApiKeyValid) {
-        console.log('API key not valid, returning default coverage');
-        return 'Non coperto';
+        console.log('API key not valid, skipping coverage check');
+        return null;
       }
 
+      console.log('Checking coverage for:', { address, city });
       const result = await FirecrawlService.scrapeOpenFiberCoverage(city, address);
       
       if (result.success && result.coverage) {
+        console.log('Coverage check successful:', result.coverage);
         return result.coverage;
       } else {
         console.error('Errore nel web scraping:', result.error);
-        return 'Non coperto';
+        return null;
       }
     } catch (error) {
       console.error('Errore nella verifica copertura fibra:', error);
-      return 'Non coperto';
+      return null;
     }
   };
 
@@ -254,9 +256,15 @@ out body qt;`;
       const city = business.tags?.["addr:city"] || "";
       if (address && address.trim() !== '') {
         const coverage = await checkOpenFiberCoverage(address, city);
-        business.fiberCoverage = coverage;
+        if (coverage) {
+          business.fiberCoverage = coverage;
+        } else {
+          // Rimuovi il campo se il web scraping fallisce
+          delete business.fiberCoverage;
+        }
       } else {
-        business.fiberCoverage = 'Non coperto';
+        // Rimuovi il campo se non c'è indirizzo
+        delete business.fiberCoverage;
       }
       
       setResults([...updatedResults]);
