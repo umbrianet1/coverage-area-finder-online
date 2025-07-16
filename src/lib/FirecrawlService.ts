@@ -85,6 +85,82 @@ export class FirecrawlService {
     return requestFn();
   }
 
+  static async scrapeGoogleMapsAddress(businessName: string, lat: number, lon: number): Promise<{ success: boolean; address?: string; error?: string }> {
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      return { success: false, error: 'API key not found' };
+    }
+
+    try {
+      if (!this.firecrawlApp) {
+        this.firecrawlApp = new FirecrawlApp({ apiKey });
+      }
+
+      // Costruisci URL Google Maps per il business
+      const googleMapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(businessName)}/@${lat},${lon},17z`;
+      
+      console.log('Scraping Google Maps for address:', { businessName, url: googleMapsUrl });
+      
+      const scrapeResponse = await this.rateLimitedRequest(async () => {
+        return this.firecrawlApp!.scrapeUrl(googleMapsUrl, {
+          formats: ['markdown', 'html'],
+          waitFor: 3000,
+          onlyMainContent: true
+        }) as Promise<FirecrawlResponse>;
+      });
+
+      if (!scrapeResponse.success) {
+        const errorMessage = (scrapeResponse as ErrorResponse).error;
+        console.error('Google Maps scrape failed:', errorMessage);
+        return { success: false, error: errorMessage || 'Failed to scrape Google Maps' };
+      }
+
+      const successResponse = scrapeResponse as ScrapeResponse;
+      
+      if (!successResponse.data || !successResponse.data.content) {
+        return { success: false, error: 'No content received from Google Maps' };
+      }
+
+      // Estrai indirizzo dal contenuto
+      const content = successResponse.data.content;
+      const markdown = successResponse.data.markdown || '';
+      
+      // Pattern per trovare indirizzi italiani
+      const addressPatterns = [
+        /indirizzo[:\s]*([^,\n]+,\s*\d{5}\s*[^,\n]+)/i,
+        /address[:\s]*([^,\n]+,\s*\d{5}\s*[^,\n]+)/i,
+        /([A-Za-z\s]+\d+[^,\n]*,\s*\d{5}\s*[A-Za-z\s]+)/g,
+        /via\s+[^,\n]+,\s*\d{5}\s*[^,\n]+/gi,
+        /corso\s+[^,\n]+,\s*\d{5}\s*[^,\n]+/gi,
+        /piazza\s+[^,\n]+,\s*\d{5}\s*[^,\n]+/gi
+      ];
+
+      let extractedAddress = '';
+      
+      for (const pattern of addressPatterns) {
+        const match = content.match(pattern) || markdown.match(pattern);
+        if (match) {
+          extractedAddress = match[0].replace(/^(indirizzo|address)[:\s]*/i, '').trim();
+          break;
+        }
+      }
+
+      if (extractedAddress) {
+        console.log('Address extracted from Google Maps:', extractedAddress);
+        return { success: true, address: extractedAddress };
+      } else {
+        console.log('No address found in Google Maps content');
+        return { success: false, error: 'Address not found in Google Maps content' };
+      }
+    } catch (error) {
+      console.error('Error during Google Maps scrape:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to connect to Google Maps' 
+      };
+    }
+  }
+
   static async scrapeOpenFiberCoverage(city: string, address: string): Promise<{ success: boolean; error?: string; coverage?: 'FTTH' | 'FWA' | 'Non coperto' }> {
     const apiKey = this.getApiKey();
     if (!apiKey) {

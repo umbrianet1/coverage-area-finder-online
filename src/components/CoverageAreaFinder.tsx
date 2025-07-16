@@ -275,36 +275,67 @@ out body qt;`;
     // Show info toast about the process
     toast({
       title: "Verifica copertura fibra",
-      description: `Verifica della copertura Open Fiber in corso per ${businesses.length} attività. Questo potrebbe richiedere alcuni minuti.`,
+      description: `Estrazione indirizzi da Google Maps e verifica copertura Open Fiber in corso per ${businesses.length} attività.`,
     });
     
     for (let i = 0; i < updatedResults.length; i++) {
       const business = updatedResults[i];
       
-      // Skip if no valid address
-      const address = formatAddress(business.tags);
-      const city = business.tags?.["addr:city"]?.trim() || "";
+      business.fiberCoverage = 'Verifica in corso...';
+      setResults([...updatedResults]);
+      
+      // Prima prova a estrarre l'indirizzo da Google Maps
+      let finalAddress = '';
+      let city = business.tags?.["addr:city"]?.trim() || '';
+      
+      if (business.tags?.name) {
+        console.log('Extracting address from Google Maps for:', business.tags.name);
+        const mapsResult = await FirecrawlService.scrapeGoogleMapsAddress(
+          business.tags.name, 
+          business.lat, 
+          business.lon
+        );
+        
+        if (mapsResult.success && mapsResult.address) {
+          finalAddress = mapsResult.address;
+          // Estrai la città dall'indirizzo se non è presente nei tag OSM
+          const cityMatch = finalAddress.match(/\d{5}\s*([^,]+)/);
+          if (cityMatch && !city) {
+            city = cityMatch[1].trim();
+          }
+          console.log('Address from Google Maps:', finalAddress);
+        } else {
+          console.log('Failed to get address from Google Maps, using OSM data');
+          // Fallback ai dati OSM
+          finalAddress = formatAddress(business.tags);
+        }
+      } else {
+        // Nessun nome, usa solo dati OSM
+        finalAddress = formatAddress(business.tags);
+      }
       
       // Valida che l'indirizzo sia significativo
-      if (!address || address.length < 5 || !city || city.length < 2) {
+      if (!finalAddress || finalAddress.length < 5 || !city || city.length < 2) {
         console.log('Skipping business with invalid address:', {
           name: business.tags?.name,
-          address: address,
+          finalAddress: finalAddress,
           city: city
         });
+        delete business.fiberCoverage;
+        setResults([...updatedResults]);
         continue;
       }
       
       // Skip se l'indirizzo contiene solo segni di punteggiatura
-      if (!/[a-zA-Z0-9]/.test(address)) {
-        console.log('Skipping business with non-alphanumeric address:', address);
+      if (!/[a-zA-Z0-9]/.test(finalAddress)) {
+        console.log('Skipping business with non-alphanumeric address:', finalAddress);
+        delete business.fiberCoverage;
+        setResults([...updatedResults]);
         continue;
       }
       
-      business.fiberCoverage = 'Verifica in corso...';
-      setResults([...updatedResults]);
-      
-      const coverage = await checkOpenFiberCoverage(address, city);
+      // Ora verifica la copertura con l'indirizzo ottenuto
+      const coverage = await checkOpenFiberCoverage(finalAddress, city);
       if (coverage) {
         business.fiberCoverage = coverage;
       } else {
@@ -314,9 +345,9 @@ out body qt;`;
       
       setResults([...updatedResults]);
       
-      // Add a small delay to be respectful to the API
+      // Add a delay to be respectful to the APIs
       if (i < updatedResults.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Aumento il delay per gestire due API
       }
     }
     
