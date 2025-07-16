@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, MapPin, Phone, ExternalLink, Radio } from "lucide-react";
+import { Loader2, MapPin, Phone, ExternalLink, Radio, Wifi } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 interface BusinessResult {
@@ -26,6 +26,7 @@ interface BusinessResult {
     office?: string;
     landuse?: string;
   };
+  fiberCoverage?: 'FTTH' | 'FWA' | 'Non coperto' | 'Verifica in corso...';
 }
 
 interface CategoryFilter {
@@ -122,12 +123,18 @@ out body qt;`;
       }
 
       const data = await response.json();
-      setResults(data.elements || []);
+      const businesses = data.elements || [];
+      setResults(businesses);
       
       toast({
         title: "Ricerca completata",
-        description: `Trovate ${data.elements?.length || 0} attività`,
+        description: `Trovate ${businesses.length} attività`,
       });
+
+      // Avvia la verifica della copertura fibra in background
+      if (businesses.length > 0) {
+        checkFiberCoverageForResults(businesses);
+      }
     } catch (error) {
       console.error("Errore nel caricamento dei dati:", error);
       toast({
@@ -163,6 +170,65 @@ out body qt;`;
     if (tags.office) return { type: tags.office, category: "Ufficio" };
     if (tags.landuse) return { type: tags.landuse, category: "Industriale" };
     return { type: "unknown", category: "Altro" };
+  };
+
+  // Check Open Fiber coverage for a specific address
+  const checkOpenFiberCoverage = async (address: string): Promise<'FTTH' | 'FWA' | 'Non coperto'> => {
+    try {
+      // Simula una chiamata all'API di Open Fiber
+      // In una implementazione reale, qui faresti una chiamata al sito di Open Fiber
+      // usando web scraping o API non ufficiali
+      
+      // Per ora ritorniamo un valore casuale per dimostrare la funzionalità
+      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
+      
+      const random = Math.random();
+      if (random < 0.6) return 'FTTH';
+      if (random < 0.8) return 'FWA';
+      return 'Non coperto';
+    } catch (error) {
+      console.error('Errore nella verifica copertura fibra:', error);
+      return 'Non coperto';
+    }
+  };
+
+  // Check fiber coverage for all results
+  const checkFiberCoverageForResults = async (businesses: BusinessResult[]) => {
+    const updatedResults = [...businesses];
+    
+    for (let i = 0; i < updatedResults.length; i++) {
+      const business = updatedResults[i];
+      business.fiberCoverage = 'Verifica in corso...';
+      setResults([...updatedResults]);
+      
+      const address = formatAddress(business.tags);
+      if (address && address.trim() !== '') {
+        const coverage = await checkOpenFiberCoverage(address);
+        business.fiberCoverage = coverage;
+      } else {
+        business.fiberCoverage = 'Non coperto';
+      }
+      
+      setResults([...updatedResults]);
+    }
+  };
+
+  const getFiberBadgeVariant = (coverage?: string) => {
+    switch (coverage) {
+      case 'FTTH': return 'default';
+      case 'FWA': return 'secondary';
+      case 'Non coperto': return 'destructive';
+      default: return 'outline';
+    }
+  };
+
+  const getFiberBadgeColor = (coverage?: string) => {
+    switch (coverage) {
+      case 'FTTH': return 'text-green-700 bg-green-100';
+      case 'FWA': return 'text-yellow-700 bg-yellow-100';
+      case 'Non coperto': return 'text-red-700 bg-red-100';
+      default: return 'text-gray-700 bg-gray-100';
+    }
   };
 
   return (
@@ -340,9 +406,23 @@ out body qt;`;
                         <div className="flex justify-between items-start mb-3">
                           <div className="flex-1">
                             <h3 className="font-semibold text-lg text-foreground">{name}</h3>
-                            <Badge variant="outline" className="mt-1">
-                              {businessInfo.category}
-                            </Badge>
+                            <div className="flex gap-2 mt-1">
+                              <Badge variant="outline">
+                                {businessInfo.category}
+                              </Badge>
+                              {item.fiberCoverage && (
+                                <Badge 
+                                  variant={getFiberBadgeVariant(item.fiberCoverage)} 
+                                  className={`${getFiberBadgeColor(item.fiberCoverage)} border-0`}
+                                >
+                                  <Wifi className="h-3 w-3 mr-1" />
+                                  {item.fiberCoverage === 'Verifica in corso...' ? 
+                                    <><Loader2 className="h-3 w-3 animate-spin mr-1" />Verifica...</> : 
+                                    item.fiberCoverage
+                                  }
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
                         
